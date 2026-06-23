@@ -4,24 +4,9 @@
  */
 
 document.addEventListener('DOMContentLoaded', async () => {
-    // 主题
-    chrome.storage.local.get(['user_theme', 'custom_themes_list'], (res) => {
-        const theme = res.user_theme || 'default';
-        const customList = res.custom_themes_list || [];
-        let color = null;
-        if (window.Theme?.getThemeColor) color = window.Theme.getThemeColor(theme, customList);
-        if (color && theme !== 'default') {
-            document.body.style.setProperty('--primary', color);
-            document.body.style.setProperty('--ring', color);
-        } else {
-            document.body.style.removeProperty('--primary');
-            document.body.style.removeProperty('--ring');
-        }
-    });
-
     // 图标
     if (window.Icons) {
-        const inject = (el, n) => { const c = el?.querySelector('.ud-popup-icon'); if (c) c.innerHTML = window.Icons[n] || ''; };
+        const inject = (el, n) => { const c = el?.querySelector('.icon'); if (c) c.innerHTML = window.Icons[n] || ''; };
         inject(document.getElementById('btn-download'), 'download');
         inject(document.getElementById('btn-manager'), 'manager');
     }
@@ -77,7 +62,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
             if (!tab || !tab.id) {
                 pageTypeLabel.textContent = '无法访问';
-                pageTypeLabel.className = 'page-type-label unknown';
+                pageTypeLabel.className = 'page-type unknown';
                 return;
             }
             currentTabId = tab.id;
@@ -86,7 +71,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const resp = await sendMsgToTab(tab.id, { type: 'POPUP_CHECK_SEARCH' });
             if (resp && resp.isSearch) {
                 pageTypeLabel.textContent = '🔍 搜索页';
-                pageTypeLabel.className = 'page-type-label search';
+                pageTypeLabel.className = 'page-type search';
                 searchControls.classList.remove('hidden');
                 return;
             }
@@ -94,17 +79,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             // Also check URL directly
             if (/^https?:\/\/search\.bilibili\.com\//.test(tab.url || '')) {
                 pageTypeLabel.textContent = '🔍 搜索页';
-                pageTypeLabel.className = 'page-type-label search';
+                pageTypeLabel.className = 'page-type search';
                 searchControls.classList.remove('hidden');
                 return;
             }
 
             pageTypeLabel.textContent = '普通B站页面';
-            pageTypeLabel.className = 'page-type-label normal';
+            pageTypeLabel.className = 'page-type normal';
             searchControls.classList.add('hidden');
         } catch (e) {
             pageTypeLabel.textContent = '非B站页面';
-            pageTypeLabel.className = 'page-type-label unknown';
+            pageTypeLabel.className = 'page-type unknown';
             searchControls.classList.add('hidden');
         }
     }
@@ -146,7 +131,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             setStatus('获取链接失败: ' + (err.message || '未知错误'), 'error');
         } finally {
             scrapeLinksBtn.disabled = false;
-            scrapeLinksBtn.textContent = '🔗 获取链接';
+            scrapeLinksBtn.textContent = '🔗 获取视频链接';
         }
     });
 
@@ -189,9 +174,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     setStatus(`⏳ 等待间隔... (剩余${msg.remaining})`, 'info');
                     break;
                 case 'done':
-                    setStatus(`✅ ${msg.url || ''} 完成`, 'success');
-                    startSearchCrawlBtn.disabled = false;
-                    scrapeLinksBtn.disabled = false;
+                    setStatus(`✅ 完成`, 'success');
                     break;
                 case 'stopped':
                     setStatus(`⏹️ 已停止 (已完成 ${msg.completed}/${msg.total})`, 'warn');
@@ -213,7 +196,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 初始化
     await checkPageType();
 
-    // 下载
+    // 下载当前视频
     document.getElementById('btn-download')?.addEventListener('click', async () => {
         try {
             const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -222,7 +205,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         window.close();
     });
 
-    // 管理
+    // 任务管理
     document.getElementById('btn-manager')?.addEventListener('click', async () => {
         const { saki_counter_queue: q = 0 } = await chrome.storage.local.get('saki_counter_queue');
         chrome.tabs.create({ url: `manager/manager.html?tab=${q > 0 ? 'active' : 'completed'}&page=1` });
