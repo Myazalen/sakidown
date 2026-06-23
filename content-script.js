@@ -158,6 +158,25 @@ chrome.storage.onChanged.addListener((changes, area) => {
         }
     }
 });
+function _getMaxFilesPerLink() {
+    // Read from storage synchronously (it's cached in the DOM/session vars)
+    // We'll use a cached value that the popup sets
+    if (window._saki_max_files_per_link !== undefined) {
+        return window._saki_max_files_per_link;
+    }
+    return 1; // default
+}
+
+// Listen for storage changes to update the max files setting
+chrome.storage.local.get(['search_max_files_per_link'], (res) => {
+    window._saki_max_files_per_link = res.search_max_files_per_link ?? 1;
+});
+chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.search_max_files_per_link) {
+        window._saki_max_files_per_link = changes.search_max_files_per_link.newValue ?? 1;
+    }
+});
+
 function collectSearchLinks() {
     const links = new Set();
     // search.bilibili.com video card links
@@ -227,16 +246,25 @@ window.addEventListener('message', (event) => {
                 merge: false, cover: false, danmaku: false,
                 name: '纯音频',
             };
-            const tasks = (payload || []).map(item => ({
+            let tasks = (payload || []).map(item => ({
                 ...item,
                 preference: { ...item.preference, strategy_config: audioOnlyConfig },
             }));
+            // 限制每个链接最多下载文件数
+            const maxFiles = _getMaxFilesPerLink();
+            if (maxFiles > 0 && tasks.length > maxFiles) {
+                console.log(`[SearchCrawl] Limiting tasks from ${tasks.length} to ${maxFiles} files per link`);
+                tasks = tasks.slice(0, maxFiles);
+            }
             if (tasks.length > 0) {
                 chrome.runtime.sendMessage({ type: 'BATCH_DOWNLOAD', payload: { tasks } }, () => {
                     // Notify background that download was queued for this tab
                     chrome.runtime.sendMessage({ type: 'AUTO_DOWNLOAD_QUEUED' }).catch(() => {});
                 });
                 ui.showToast(`已添加 ${tasks.length} 个音频下载任务`, 3000);
+            } else {
+                // No tasks, still need to notify background to continue
+                chrome.runtime.sendMessage({ type: 'AUTO_DOWNLOAD_QUEUED' }).catch(() => {});
             }
         }
 

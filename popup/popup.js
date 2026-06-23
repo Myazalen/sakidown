@@ -27,15 +27,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // 读取配置
-    chrome.storage.local.get(['task_interval', 'show_quick_button', 'search_delay', 'search_target_links'], (res) => {
+    chrome.storage.local.get(['task_interval', 'show_quick_button', 'search_delay', 'search_target_links', 'search_max_files_per_link'], (res) => {
         const intervalInput = document.getElementById('taskInterval');
         const showBtnCheck = document.getElementById('showQuickBtn');
         const searchDelayInput = document.getElementById('searchDelayInput');
         const targetLinkCountInput = document.getElementById('targetLinkCount');
+        const maxFilesInput = document.getElementById('maxFilesPerLink');
         if (intervalInput) intervalInput.value = res.task_interval ?? 5;
         if (showBtnCheck) showBtnCheck.checked = res.show_quick_button !== false;
         if (searchDelayInput) searchDelayInput.value = res.search_delay ?? 5;
         if (targetLinkCountInput) targetLinkCountInput.value = res.search_target_links ?? 20;
+        if (maxFilesInput) maxFilesInput.value = res.search_max_files_per_link ?? 1;
     });
 
     // 保存配置
@@ -51,6 +53,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
     document.getElementById('targetLinkCount')?.addEventListener('change', (e) => {
         chrome.storage.local.set({ search_target_links: parseInt(e.target.value) || 20 });
+    });
+    document.getElementById('maxFilesPerLink')?.addEventListener('change', (e) => {
+        const val = parseInt(e.target.value) || 1;
+        chrome.storage.local.set({ search_max_files_per_link: Math.max(1, Math.min(50, val)) });
     });
 
     // ====== 搜索页批量下载相关 ======

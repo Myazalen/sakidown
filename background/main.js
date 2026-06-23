@@ -214,6 +214,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             searchCrawlState.stopped = true;
             searchCrawlState.running = false;
             closeSearchCrawlTab();
+            // Clear all pending timers
+            if (searchCrawlState._pendingTimeout) {
+                clearTimeout(searchCrawlState._pendingTimeout);
+                searchCrawlState._pendingTimeout = null;
+            }
+            if (searchCrawlState._pendingNextTimeout) {
+                clearTimeout(searchCrawlState._pendingNextTimeout);
+                searchCrawlState._pendingNextTimeout = null;
+            }
             broadcastSearchStatus('stopped', `已停止`, searchCrawlState.completed, searchCrawlState.links.length);
         }
         sendResponse({ success: true });
@@ -223,7 +232,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Content script notifies us that BATCH_DOWNLOAD was queued (AUTO_DOWNLOAD_QUEUED)
     // This tells us the audio download has been queued, close the tab and move on
     if (message.type === 'AUTO_DOWNLOAD_QUEUED') {
-        if (searchCrawlState && searchCrawlState.running) {
+        if (searchCrawlState && searchCrawlState.running && !searchCrawlState.stopped) {
             broadcastSearchStatus('downloading', '');
             // Clear any pending timeout for this video
             if (searchCrawlState._pendingTimeout) {
@@ -232,13 +241,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }
             // Wait a short moment for the BATCH_DOWNLOAD message to be processed
             setTimeout(() => {
+                if (!searchCrawlState || searchCrawlState.stopped) return;
                 closeSearchCrawlTab();
                 searchCrawlState.currentIndex++;
                 searchCrawlState.completed++;
                 broadcastSearchStatus('done', ``, searchCrawlState.completed, searchCrawlState.links.length);
 
                 // Schedule next
-                setTimeout(() => processSearchCrawlNext(), searchCrawlState.delay);
+                setTimeout(() => {
+                    if (!searchCrawlState || searchCrawlState.stopped) return;
+                    processSearchCrawlNext();
+                }, searchCrawlState.delay);
             }, 800);
         }
         return false;
