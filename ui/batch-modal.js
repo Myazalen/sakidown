@@ -237,21 +237,21 @@ class BatchModal {
 
     _generateStrategyTooltip(config) {
         if (!config) return '';
-        const tags = [];
+        const groups = { media: [], codec: [], attachments: [] };
 
-        if (config.audio) {
-            tags.push('音频流');
+        if (config.video && config.audio) {
+            if (config.merge) {
+                groups.media.push('完整视频');
+            } else {
+                groups.media.push('视频流');
+                groups.media.push('音频流');
+            }
+        } else if (config.video) {
+            groups.media.push('视频流');
+        } else if (config.audio) {
+            groups.media.push('音频流');
         }
 
-        if (config.cover) tags.push('封面');
-        if (config.danmaku) tags.push(config.danmaku === 'ass' ? 'ASS弹幕' : 'XML弹幕');
-
-        if (tags.length === 0) {
-            return `<div class="ud-flex-center"><span class="ud-tag">空壳任务</span></div>`;
-        }
-
-        return `<div class="ud-tooltip-group"><div class="ud-tooltip-label">当前策略</div><div class="grid-tags-row">${tags.map((t) => `<span class="ud-tag">${t}</span>`).join('')}</div></div>`;
-    }
         if (config.video) {
             const qualityMap = {
                 best: '最佳画质',
