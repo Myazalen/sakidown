@@ -206,39 +206,13 @@ class StrategiesPanel {
     _generateTags(cfg) {
         if (!cfg) return [];
         const tags = [];
-        const {
-            video: video,
-            audio: audio,
-            merge: merge,
-            cover: cover,
-            danmaku: danmaku,
-            codec: codec,
-            quality: quality,
-        } = cfg;
+        const { audio: audio, cover: cover, danmaku: danmaku } = cfg;
 
-        if (!video && !audio && !cover && !danmaku) {
+        if (!audio && !cover && !danmaku) {
             tags.push('空壳任务');
         } else {
-            if (video && audio && merge) {
-                tags.push('完整视频');
-            } else if (video && !audio) {
-                tags.push('视频流');
-            } else if (!video && audio) {
+            if (audio) {
                 tags.push('音频流');
-            } else if (video && audio && !merge) {
-                tags.push('视频流');
-                tags.push('音频流');
-            }
-
-            if (video && quality && quality.primary) {
-                const opt = QUALITY_OPTIONS.find((o) => o.value === quality.primary);
-                const label = opt ? opt.label : quality.primary;
-
-                tags.push(label);
-            }
-
-            if (video && codec && codec.primary) {
-                tags.push(codec.primary.toUpperCase());
             }
 
             if (cover) {

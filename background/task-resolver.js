@@ -44,18 +44,20 @@ class TaskResolver {
             task = await BilibiliApi.fetchMetadata(task);
         }
 
-        if (
-            task.preference.strategy_config &&
-      (task.preference.strategy_config.audio !== false || task.preference.strategy_config.video !== false)
-        ) {
+        const needVideo = task.preference.strategy_config?.video !== false;
+        const needAudio = task.preference.strategy_config?.audio !== false;
+
+        if (task.preference.strategy_config && (needAudio || needVideo)) {
             task.status.phase_text = '解析流地址...';
             const { bvid: bvid, cid: cid, ep_id: ep_id, type: type } = task.metadata;
             const rawData = await BilibiliApi.fetchDashStream(bvid, cid, ep_id, type);
             const resolved = BilibiliApi.standardizeStreams(rawData);
 
-            task.status.streams = resolved.videos;
+            if (needVideo) {
+                task.status.streams = resolved.videos;
+            }
 
-            if (resolved.audio) {
+            if (needAudio && resolved.audio) {
                 task.status.audio = resolved.audio;
                 task.status.audio_candidates = [resolved.audio];
             }
