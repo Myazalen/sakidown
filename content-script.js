@@ -19,6 +19,15 @@
  */
 
 const FAB_HOST_ID = 'saki-fab-container';
+const SEARCH_HOST_ID = 'saki-search-collector';
+
+// Helper to detect if we're on a search page
+function isSearchPage() {
+    return /^https?:\/\/search\.bilibili\.com\/all/.test(location.href) ||
+           /^https?:\/\/search\.bilibili\.com\/video/.test(location.href) ||
+           /^https?:\/\/search\.bilibili\.com\/pgc/.test(location.href) ||
+           /^https?:\/\/search\.bilibili\.com\/bangumi/.test(location.href);
+}
 
 const injectAdapter = () => {
     const script = document.createElement('script');
@@ -149,6 +158,36 @@ chrome.storage.onChanged.addListener((changes, area) => {
         }
     }
 });
+function collectSearchLinks() {
+    const links = new Set();
+    // search.bilibili.com video card links
+    document.querySelectorAll('a[href*="/video/"]').forEach(a => {
+        const href = a.getAttribute('href');
+        if (!href) return;
+        // Resolve relative URLs
+        let url = href.startsWith('//') ? 'https:' + href :
+                  href.startsWith('/') ? 'https://www.bilibili.com' + href : href;
+        if (url.includes('/video/') && !url.includes('/video/BV')) {
+            // Some search links have /video/ in path but need full URL
+        }
+        if (url.match(/\/video\/(BV|av)[a-zA-Z0-9]+/i)) {
+            // normalize: ensure it's an absolute bilibili URL
+            const m = url.match(/(BV|av)[a-zA-Z0-9]+/i);
+            if (m) {
+                links.add(`https://www.bilibili.com/video/${m[0]}`);
+            }
+        }
+    });
+    // Also look inside search item containers
+    document.querySelectorAll('.search-content .video-item a[href*="/video/"], .bili-video-card a[href*="/video/"], .video-list-item a[href*="/video/"]').forEach(a => {
+        const href = a.getAttribute('href');
+        if (!href) return;
+        const m = href.match(/(BV|av)[a-zA-Z0-9]+/i);
+        if (m) links.add(`https://www.bilibili.com/video/${m[0]}`);
+    });
+    return [...links];
+}
+
 window.addEventListener('message', (event) => {
     if (event.source !== window || !event.data || event.data.source !== 'SakiDown') return;
     const data = event.data;
@@ -193,7 +232,10 @@ window.addEventListener('message', (event) => {
                 preference: { ...item.preference, strategy_config: audioOnlyConfig },
             }));
             if (tasks.length > 0) {
-                chrome.runtime.sendMessage({ type: 'BATCH_DOWNLOAD', payload: { tasks } });
+                chrome.runtime.sendMessage({ type: 'BATCH_DOWNLOAD', payload: { tasks } }, () => {
+                    // Notify background that download was queued for this tab
+                    chrome.runtime.sendMessage({ type: 'AUTO_DOWNLOAD_QUEUED' }).catch(() => {});
+                });
                 ui.showToast(`已添加 ${tasks.length} 个音频下载任务`, 3000);
             }
         }
@@ -228,6 +270,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
 
     if (msg.type === 'POPUP_SHOW_TOAST') ui.showToast(msg.msg, 5000);
+
+    // Search page: check page type
+    if (msg.type === 'POPUP_CHECK_SEARCH') {
+        sendResponse({ isSearch: isSearchPage() });
+        return;
+    }
+
+    // Search page: collect video links
+    if (msg.type === 'POPUP_SCRAPE_SEARCH') {
+        const links = collectSearchLinks();
+        sendResponse({ links });
+        return;
+    }
 });
 ui.onBatchConfirm((selectedItems, strategy_config, fullStrategy) => {
     if (selectedItems.length === 0) return;

@@ -184,4 +184,201 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         return false;
     }
+
+    // ====== Search page batch audio download ======
+    if (message.type === 'SEARCH_CRAWL_START') {
+        const links = message.links;
+        const delay = message.delay || 5000;
+        const searchTabId = message.searchTabId;
+
+        searchCrawlState = {
+            running: true,
+            stopped: false,
+            links: [...links],
+            currentIndex: 0,
+            delay: delay,
+            searchTabId: searchTabId,
+            currentTabId: null,
+            completed: 0
+        };
+
+        broadcastSearchStatus('info', `开始批量处理 ${links.length} 个视频`);
+        processSearchCrawlNext();
+
+        sendResponse({ success: true });
+        return false;
+    }
+
+    if (message.type === 'SEARCH_CRAWL_STOP') {
+        if (searchCrawlState) {
+            searchCrawlState.stopped = true;
+            searchCrawlState.running = false;
+            closeSearchCrawlTab();
+            broadcastSearchStatus('stopped', `已停止`, searchCrawlState.completed, searchCrawlState.links.length);
+        }
+        sendResponse({ success: true });
+        return false;
+    }
+
+    // Content script notifies us that BATCH_DOWNLOAD was queued (AUTO_DOWNLOAD_QUEUED)
+    // This tells us the audio download has been queued, close the tab and move on
+    if (message.type === 'AUTO_DOWNLOAD_QUEUED') {
+        if (searchCrawlState && searchCrawlState.running) {
+            broadcastSearchStatus('downloading', '');
+            // Clear any pending timeout for this video
+            if (searchCrawlState._pendingTimeout) {
+                clearTimeout(searchCrawlState._pendingTimeout);
+                searchCrawlState._pendingTimeout = null;
+            }
+            // Wait a short moment for the BATCH_DOWNLOAD message to be processed
+            setTimeout(() => {
+                closeSearchCrawlTab();
+                searchCrawlState.currentIndex++;
+                searchCrawlState.completed++;
+                broadcastSearchStatus('done', ``, searchCrawlState.completed, searchCrawlState.links.length);
+
+                // Schedule next
+                setTimeout(() => processSearchCrawlNext(), searchCrawlState.delay);
+            }, 800);
+        }
+        return false;
+    }
 });
+
+// Search crawl state
+let searchCrawlState = null;
+
+async function processSearchCrawlNext() {
+    if (!searchCrawlState || searchCrawlState.stopped || !searchCrawlState.running) {
+        if (searchCrawlState) {
+            searchCrawlState.running = false;
+            broadcastSearchStatus('finished', `全部完成`, searchCrawlState.completed, searchCrawlState.links.length);
+        }
+        return;
+    }
+
+    if (searchCrawlState.currentIndex >= searchCrawlState.links.length) {
+        searchCrawlState.running = false;
+        broadcastSearchStatus('finished', `全部完成`, searchCrawlState.completed, searchCrawlState.links.length);
+        return;
+    }
+
+    const url = searchCrawlState.links[searchCrawlState.currentIndex];
+    const remaining = searchCrawlState.links.length - searchCrawlState.currentIndex - 1;
+    broadcastSearchStatus('opening', url, searchCrawlState.currentIndex + 1, searchCrawlState.links.length, remaining);
+
+    try {
+        // Create new tab (not active to avoid stealing focus)
+        const tab = await chrome.tabs.create({ url, active: false });
+        searchCrawlState.currentTabId = tab.id;
+
+        // Wait for tab to load
+        await waitForTabLoad(tab.id);
+        if (searchCrawlState.stopped) { closeSearchCrawlTab(); return; }
+
+        // Wait a bit for content scripts to initialize
+        await delay(1500);
+        if (searchCrawlState.stopped) { closeSearchCrawlTab(); return; }
+
+        // Send POPUP_TRIGGER_BATCH to trigger auto-download with audio-only config
+        try {
+            await chrome.tabs.sendMessage(tab.id, { type: 'POPUP_TRIGGER_BATCH' });
+            // Set a safety timeout in case sniff fails (AUTO_DOWNLOAD_QUEUED never arrives)
+            searchCrawlState._pendingTimeout = setTimeout(() => {
+                if (searchCrawlState && searchCrawlState.running && searchCrawlState.currentTabId === tab.id) {
+                    console.warn('[SearchCrawl] Safety timeout - AUTO_DOWNLOAD_QUEUED not received, closing tab and moving on');
+                    closeSearchCrawlTab();
+                    searchCrawlState.currentIndex++;
+                    searchCrawlState.completed++;
+                    broadcastSearchStatus('waiting', url, searchCrawlState.completed, searchCrawlState.links.length, `超时跳过`);
+                    setTimeout(() => processSearchCrawlNext(), searchCrawlState.delay);
+                }
+            }, 35000); // 35 second safety timeout
+        } catch (err) {
+            console.error('[SearchCrawl] Failed to send POPUP_TRIGGER_BATCH:', err);
+            // If it fails, close tab and move on
+            closeSearchCrawlTab();
+            searchCrawlState.currentIndex++;
+            searchCrawlState.completed++;
+            broadcastSearchStatus('error', url, searchCrawlState.completed, searchCrawlState.links.length, `触发下载失败: ${err.message}`);
+            setTimeout(() => processSearchCrawlNext(), searchCrawlState.delay);
+        }
+    } catch (err) {
+        console.error('[SearchCrawl] Error opening tab:', err);
+        closeSearchCrawlTab();
+        searchCrawlState.currentIndex++;
+        searchCrawlState.completed++;
+        broadcastSearchStatus('error', url, searchCrawlState.completed, searchCrawlState.links.length, `打开失败: ${err.message}`);
+        setTimeout(() => processSearchCrawlNext(), searchCrawlState.delay);
+    }
+}
+
+function closeSearchCrawlTab() {
+    if (searchCrawlState && searchCrawlState.currentTabId) {
+        chrome.tabs.remove(searchCrawlState.currentTabId).catch(() => {});
+        searchCrawlState.currentTabId = null;
+    }
+}
+
+function waitForTabLoad(tabId) {
+    return new Promise((resolve) => {
+        let resolved = false;
+        const listener = (id, changeInfo) => {
+            if (!resolved && id === tabId && changeInfo.status === 'complete') {
+                resolved = true;
+                chrome.tabs.onUpdated.removeListener(listener);
+                clearInterval(stopCheck);
+                resolve();
+            }
+        };
+        chrome.tabs.onUpdated.addListener(listener);
+
+        // Stop check
+        const stopCheck = setInterval(() => {
+            if (!resolved && searchCrawlState && searchCrawlState.stopped) {
+                resolved = true;
+                chrome.tabs.onUpdated.removeListener(listener);
+                clearInterval(stopCheck);
+                resolve();
+            }
+        }, 200);
+
+        // Timeout
+        setTimeout(() => {
+            if (!resolved) {
+                resolved = true;
+                chrome.tabs.onUpdated.removeListener(listener);
+                clearInterval(stopCheck);
+                resolve();
+            }
+        }, 20000);
+    });
+}
+
+function delay(ms) {
+    return new Promise(r => setTimeout(r, ms));
+}
+
+function broadcastSearchStatus(type, url, current, total, remaining, error) {
+    const statusMap = {
+        'opening': 'opening',
+        'downloading': 'downloading',
+        'waiting': 'waiting',
+        'done': 'done',
+        'stopped': 'stopped',
+        'error': 'error',
+        'finished': 'finished',
+        'info': 'info'
+    };
+    chrome.runtime.sendMessage({
+        type: 'SEARCH_CRAWL_STATUS',
+        status: statusMap[type] || type,
+        url: url,
+        current: current,
+        total: total,
+        remaining: remaining,
+        error: error,
+        completed: current,
+        title: url ? url.split('/').pop() : ''
+    }).catch(() => {});
+}
