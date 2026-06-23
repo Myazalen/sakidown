@@ -149,14 +149,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return false;
     }
 
-    if (message.type === 'OPEN_SETTINGS_BG') {
-        if (sender.tab && sender.tab.id) {
-            chrome.tabs.sendMessage(sender.tab.id, { type: 'OPEN_SETTINGS' });
-        }
-
-        return false;
-    }
-
     if (message.type === 'UPDATE_WBI_KEYS') {
 
         BilibiliApi.updateKeys(message.payload);

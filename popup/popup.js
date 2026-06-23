@@ -1,31 +1,15 @@
 /**
  * @file popup/popup.js
- * @description 扩展弹窗入口逻辑 (Extension Popup Entry)
- * * 核心职责 (Core Responsibilities):
- * 1. 初始化与主题同步 (Init & Theme Sync):
- * - 扩展图标被点击时触发，负责读取存储中的主题配置 (`user_theme`)。
- * - 动态注入 CSS 变量 (`--primary`) 和 SVG 图标，确保弹窗 UI 与主程序风格一致。
- * 2. 交互路由 (Interaction Routing):
- * - **下载**: 向当前激活的 Tab 发送 `POPUP_TRIGGER_BATCH` 消息，唤起 Content Script 的批量下载面板。
- * - **管理**: 实现智能路由逻辑，根据 `saki_counter_queue` (队列数) 和 `saki_counter_history` (历史数) 决定打开管理面板时默认显示的 Tab。
- * - **设置**: 向 Content Script 发送 `OPEN_SETTINGS` 消息，在页面内打开设置模态框。
- * * 通信链路 (Communication):
- * - Input: 用户点击弹窗按钮。
- * - Output: `chrome.tabs.sendMessage` (与 Content Script 通信), `chrome.tabs.create` (打开新标签页)。
- * * @author weiyunjun
- * @version v0.1.0
+ * @description 扩展弹窗入口逻辑
  */
 
 document.addEventListener('DOMContentLoaded', async () => {
+    // 主题
     chrome.storage.local.get(['user_theme', 'custom_themes_list'], (res) => {
         const theme = res.user_theme || 'default';
         const customList = res.custom_themes_list || [];
         let color = null;
-
-        if (window.Theme && window.Theme.getThemeColor) {
-            color = window.Theme.getThemeColor(theme, customList);
-        }
-
+        if (window.Theme?.getThemeColor) color = window.Theme.getThemeColor(theme, customList);
         if (color && theme !== 'default') {
             document.body.style.setProperty('--primary', color);
             document.body.style.setProperty('--ring', color);
@@ -34,60 +18,44 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.body.style.removeProperty('--ring');
         }
     });
-    const btnDownload = document.getElementById('btn-download');
-    const btnManager = document.getElementById('btn-manager');
-    const btnSettings = document.getElementById('btn-settings');
 
-    const injectIcon = (element, iconName) => {
-        const iconContainer = element.querySelector('.ud-popup-icon');
-
-        if (iconContainer && window.Icons && window.Icons[iconName]) {
-            iconContainer.innerHTML = window.Icons[iconName];
-        }
-    };
-
+    // 图标
     if (window.Icons) {
-        injectIcon(btnDownload, 'download');
-        injectIcon(btnManager, 'manager');
-        injectIcon(btnSettings, 'settings');
+        const inject = (el, n) => { const c = el?.querySelector('.ud-popup-icon'); if (c) c.innerHTML = window.Icons[n] || ''; };
+        inject(document.getElementById('btn-download'), 'download');
+        inject(document.getElementById('btn-manager'), 'manager');
     }
 
-    async function sendMessageToContent(message) {
+    // 读取配置
+    chrome.storage.local.get(['task_interval', 'show_quick_button'], (res) => {
+        const intervalInput = document.getElementById('taskInterval');
+        const showBtnCheck = document.getElementById('showQuickBtn');
+        if (intervalInput) intervalInput.value = res.task_interval ?? 5;
+        if (showBtnCheck) showBtnCheck.checked = res.show_quick_button !== false;
+    });
+
+    // 保存配置
+    document.getElementById('taskInterval')?.addEventListener('change', (e) => {
+        const val = parseInt(e.target.value) || 5;
+        chrome.storage.local.set({ task_interval: Math.max(0, Math.min(60, val)) });
+    });
+    document.getElementById('showQuickBtn')?.addEventListener('change', (e) => {
+        chrome.storage.local.set({ show_quick_button: e.target.checked });
+    });
+
+    // 下载
+    document.getElementById('btn-download')?.addEventListener('click', async () => {
         try {
             const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-            if (!tab || !tab.id) return null;
-            if (tab.url.startsWith('chrome://') || tab.url.startsWith('edge://')) return null;
-
-            return await chrome.tabs.sendMessage(tab.id, message);
-        } catch (e) {
-
-            return null;
-        }
-    }
-
-    btnDownload.addEventListener('click', async () => {
-        sendMessageToContent({ type: 'POPUP_TRIGGER_BATCH' });
+            if (tab?.id) await chrome.tabs.sendMessage(tab.id, { type: 'POPUP_TRIGGER_BATCH' });
+        } catch (e) {}
         window.close();
     });
-    btnManager.addEventListener('click', async () => {
-        const { saki_counter_queue: saki_counter_queue = 0, saki_counter_history: saki_counter_history = 0 } =
-      await chrome.storage.local.get(['saki_counter_queue', 'saki_counter_history']);
-        let tab = 'active';
 
-        if (saki_counter_queue > 0) {
-            tab = 'active';
-        } else if (saki_counter_history > 0) {
-            tab = 'completed';
-        } else {
-            tab = 'active';
-        }
-
-        chrome.tabs.create({ url: `manager/manager.html?tab=${tab}&page=1` });
-        window.close();
-    });
-    btnSettings.addEventListener('click', () => {
-        sendMessageToContent({ type: 'OPEN_SETTINGS' });
+    // 管理
+    document.getElementById('btn-manager')?.addEventListener('click', async () => {
+        const { saki_counter_queue: q = 0 } = await chrome.storage.local.get('saki_counter_queue');
+        chrome.tabs.create({ url: `manager/manager.html?tab=${q > 0 ? 'active' : 'completed'}&page=1` });
         window.close();
     });
 });

@@ -49,7 +49,6 @@
         "ui/confirm-modal.js",
         "ui/ui-manager.js",
         "settings/strategies.js",
-        "settings/settings-modal.js",
         "settings/theme.js",
         "content-script.js"
       ],
@@ -85,9 +84,6 @@
         "ui/base-modal.js",
         "ui/confirm-modal.js",
         "ui/ui-manager.js",
-        "settings/settings-modal.js",
-        "settings/settings-frame.html",
-        "settings/settings-main.js",
         "ui/download-frame.html",
         "ui/download-main.js",
         "ui/batch-modal.js"

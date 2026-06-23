@@ -216,13 +216,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return;
     }
 
-    if (msg.type === 'OPEN_SETTINGS') {
-        ui.openSettings();
-        sendResponse({ status: 'ok' });
-
-        return;
-    }
-
     if (msg.type === 'DOWNLOAD_PROGRESS') {
         const { status: status } = msg.payload;
 
