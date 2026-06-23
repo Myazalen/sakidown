@@ -110,29 +110,52 @@ document.addEventListener('DOMContentLoaded', async () => {
         statusBox.scrollTop = statusBox.scrollHeight;
     }
 
-    // 获取搜索页链接
+    // 获取搜索页链接（自动翻页）
     scrapeLinksBtn.addEventListener('click', async () => {
         if (!currentTabId) return;
         scrapeLinksBtn.disabled = true;
-        scrapeLinksBtn.textContent = '⏳ 获取中...';
-        setStatus('正在收集视频链接...', 'info');
+        scrapeLinksBtn.textContent = '⏳ 收集中...';
+        const targetCount = parseInt(document.getElementById('targetLinkCount').value) || 20;
+        const scrollDelay = parseInt(document.getElementById('searchDelayInput').value) * 1000 || 2000;
+        setStatus(`📄 正在自动翻页收集视频链接，目标 ${targetCount} 个...`, 'info');
 
-        try {
-            const resp = await sendMsgToTab(currentTabId, { type: 'POPUP_SCRAPE_SEARCH' });
-            if (resp && resp.links && resp.links.length > 0) {
+        // 设置等待标志，PAGINATE_COLLECTED 可能会在页面跳转后通过 background 中转发过来
+        window._waitingForPaginate = true;
+
+        // 发送消息给 content script（可能因翻页跳转而断开）
+        sendMsgToTab(currentTabId, {
+            type: 'POPUP_SCRAPE_SEARCH_PAGINATE',
+            targetCount: targetCount,
+            scrollDelay: scrollDelay
+        }).then((resp) => {
+            if (resp && resp.links) {
+                // 立即得到了响应（第一页就够了或没有下一页）
+                window._waitingForPaginate = false;
                 collectedLinks = resp.links;
                 searchLinkCount.textContent = collectedLinks.length;
-                setStatus(`✅ 找到 ${collectedLinks.length} 个视频链接`, 'success');
-                startSearchCrawlBtn.disabled = false;
-            } else {
-                setStatus('未找到视频链接，请确认页面已加载', 'warn');
+                if (collectedLinks.length > 0) {
+                    setStatus(`✅ 收集到 ${collectedLinks.length} 个视频链接${collectedLinks.length < targetCount ? '（已无更多页）' : ''}`, 'success');
+                    startSearchCrawlBtn.disabled = false;
+                } else {
+                    setStatus('未找到视频链接', 'warn');
+                }
+                scrapeLinksBtn.disabled = false;
+                scrapeLinksBtn.textContent = '🔗 获取视频链接（自动翻页）';
             }
-        } catch (err) {
-            setStatus('获取链接失败: ' + (err.message || '未知错误'), 'error');
-        } finally {
-            scrapeLinksBtn.disabled = false;
-            scrapeLinksBtn.textContent = '🔗 获取视频链接';
-        }
+            // 如果 resp 为空（翻页跳转导致断开），等待 PAGINATE_COLLECTED 消息
+        }).catch(() => {
+            // 跳转导致的断开，忽略，等 PAGINATE_COLLECTED
+        });
+
+        // 30 秒超时保护
+        setTimeout(() => {
+            if (window._waitingForPaginate) {
+                window._waitingForPaginate = false;
+                setStatus('⏰ 收集超时，请重新尝试', 'warn');
+                scrapeLinksBtn.disabled = false;
+                scrapeLinksBtn.textContent = '🔗 获取视频链接（自动翻页）';
+            }
+        }, 60000);
     });
 
     // 开始批量下载
@@ -154,14 +177,36 @@ document.addEventListener('DOMContentLoaded', async () => {
         }).catch(() => {});
     });
 
-    // 停止批量下载
+    // 停止批量下载（也停止翻页收集）
     stopSearchCrawlBtn.addEventListener('click', () => {
         setStatus('⏹️ 正在停止...', 'warn');
+        // 停止下载爬取
         chrome.runtime.sendMessage({ type: 'SEARCH_CRAWL_STOP' }).catch(() => {});
+        // 停止翻页收集（清除 storage state，翻页后不会再继续）
+        chrome.runtime.sendMessage({ type: 'SEARCH_PAGINATE_STOP' }).catch(() => {});
+        // 恢复按钮状态
+        scrapeLinksBtn.disabled = false;
+        scrapeLinksBtn.textContent = '🔗 获取视频链接（自动翻页）';
+        startSearchCrawlBtn.disabled = false;
     });
 
-    // 监听来自background的状态消息
+    // 监听来自background的状态消息和翻页收集结果
     chrome.runtime.onMessage.addListener((msg) => {
+        // 翻页收集完成
+        if (msg.type === 'PAGINATE_COLLECTED') {
+            if (msg.links && msg.links.length > 0) {
+                collectedLinks = msg.links;
+                searchLinkCount.textContent = collectedLinks.length;
+                setStatus(`✅ 收集到 ${collectedLinks.length} 个视频链接`, 'success');
+                startSearchCrawlBtn.disabled = false;
+            } else {
+                setStatus('未找到视频链接', 'warn');
+            }
+            scrapeLinksBtn.disabled = false;
+            scrapeLinksBtn.textContent = '🔗 获取视频链接（自动翻页）';
+            return;
+        }
+
         if (msg.type === 'SEARCH_CRAWL_STATUS') {
             switch (msg.status) {
                 case 'opening':

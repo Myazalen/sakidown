@@ -159,15 +159,12 @@ chrome.storage.onChanged.addListener((changes, area) => {
     }
 });
 function _getMaxFilesPerLink() {
-    // Read from storage synchronously (it's cached in the DOM/session vars)
-    // We'll use a cached value that the popup sets
     if (window._saki_max_files_per_link !== undefined) {
         return window._saki_max_files_per_link;
     }
-    return 1; // default
+    return 1;
 }
 
-// Listen for storage changes to update the max files setting
 chrome.storage.local.get(['search_max_files_per_link'], (res) => {
     window._saki_max_files_per_link = res.search_max_files_per_link ?? 1;
 });
@@ -179,32 +176,73 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 function collectSearchLinks() {
     const links = new Set();
-    // search.bilibili.com video card links
     document.querySelectorAll('a[href*="/video/"]').forEach(a => {
         const href = a.getAttribute('href');
         if (!href) return;
-        // Resolve relative URLs
         let url = href.startsWith('//') ? 'https:' + href :
                   href.startsWith('/') ? 'https://www.bilibili.com' + href : href;
-        if (url.includes('/video/') && !url.includes('/video/BV')) {
-            // Some search links have /video/ in path but need full URL
-        }
-        if (url.match(/\/video\/(BV|av)[a-zA-Z0-9]+/i)) {
-            // normalize: ensure it's an absolute bilibili URL
-            const m = url.match(/(BV|av)[a-zA-Z0-9]+/i);
-            if (m) {
-                links.add(`https://www.bilibili.com/video/${m[0]}`);
-            }
-        }
-    });
-    // Also look inside search item containers
-    document.querySelectorAll('.search-content .video-item a[href*="/video/"], .bili-video-card a[href*="/video/"], .video-list-item a[href*="/video/"]').forEach(a => {
-        const href = a.getAttribute('href');
-        if (!href) return;
-        const m = href.match(/(BV|av)[a-zA-Z0-9]+/i);
+        const m = url.match(/(BV|av)[a-zA-Z0-9]+/i);
         if (m) links.add(`https://www.bilibili.com/video/${m[0]}`);
     });
     return [...links];
+}
+
+function findNextPageBtn() {
+    const allNext = [...document.querySelectorAll('a, button, span')].filter(el =>
+        el.textContent.trim() === '下一页' && !el.classList.contains('disabled') && !el.disabled
+    );
+    return allNext.length > 0 ? allNext[0] : null;
+}
+
+/**
+ * 自动翻页收集链接（简单循环版）
+ * 每页收集链接→等用户设置的时间→点下一页→继续
+ * Set 自动去重
+ */
+async function continuePaginationCollection() {
+    const state = await chrome.storage.local.get(['_saki_paginate_state']);
+    const raw = state._saki_paginate_state;
+    if (!raw || !raw.running) return;
+
+    const collected = new Set();
+    const pageWait = raw.pageWait || 4000; // 翻页等待间隔
+    const maxRounds = 100;
+
+    for (let round = 0; round < maxRounds; round++) {
+        // 先收集当前页所有链接（Set 自动去重）
+        const currentLinks = collectSearchLinks();
+        for (const url of currentLinks) {
+            collected.add(url);
+        }
+
+        // 检查是否停止
+        const check = await chrome.storage.local.get(['_saki_paginate_state']);
+        if (!check._saki_paginate_state || !check._saki_paginate_state.running) return;
+
+        // 收够了就返回
+        if (collected.size >= raw.targetCount) {
+            const links = [...collected].slice(0, raw.targetCount);
+            await chrome.storage.local.remove('_saki_paginate_state');
+            try { await chrome.runtime.sendMessage({ type: 'PAGINATE_COLLECTED', links }); } catch (_) {}
+            return;
+        }
+
+        // 找下一页
+        const nextBtn = findNextPageBtn();
+        if (!nextBtn) {
+            // 没有下一页了
+            const links = [...collected];
+            await chrome.storage.local.remove('_saki_paginate_state');
+            try { await chrome.runtime.sendMessage({ type: 'PAGINATE_COLLECTED', links }); } catch (_) {}
+            return;
+        }
+
+        // 点下一页
+        nextBtn.click();
+
+        // 等用户设置的秒数（让新页面渲染）
+        await new Promise(r => setTimeout(r, pageWait));
+    }
 }
 
 window.addEventListener('message', (event) => {
@@ -238,7 +276,6 @@ window.addEventListener('message', (event) => {
         if (activeTrigger === 'batch') {
             ui.showBatchModal(payload);
         } else if (activeTrigger === 'autoDownload') {
-            // 直接下载全部，纯音频策略，不弹框
             const audioOnlyConfig = {
                 audio: true, video: false,
                 quality: { primary: 'best', secondary: 'dolby' },
@@ -250,20 +287,16 @@ window.addEventListener('message', (event) => {
                 ...item,
                 preference: { ...item.preference, strategy_config: audioOnlyConfig },
             }));
-            // 限制每个链接最多下载文件数
             const maxFiles = _getMaxFilesPerLink();
             if (maxFiles > 0 && tasks.length > maxFiles) {
-                console.log(`[SearchCrawl] Limiting tasks from ${tasks.length} to ${maxFiles} files per link`);
                 tasks = tasks.slice(0, maxFiles);
             }
             if (tasks.length > 0) {
                 chrome.runtime.sendMessage({ type: 'BATCH_DOWNLOAD', payload: { tasks } }, () => {
-                    // Notify background that download was queued for this tab
                     chrome.runtime.sendMessage({ type: 'AUTO_DOWNLOAD_QUEUED' }).catch(() => {});
                 });
                 ui.showToast(`已添加 ${tasks.length} 个音频下载任务`, 3000);
             } else {
-                // No tasks, still need to notify background to continue
                 chrome.runtime.sendMessage({ type: 'AUTO_DOWNLOAD_QUEUED' }).catch(() => {});
             }
         }
@@ -305,13 +338,37 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return;
     }
 
-    // Search page: collect video links
+    // Search page: collect video links (simple, no pagination)
     if (msg.type === 'POPUP_SCRAPE_SEARCH') {
         const links = collectSearchLinks();
         sendResponse({ links });
         return;
     }
+
+    // Search page: start pagination collection (SPA loop version)
+    if (msg.type === 'POPUP_SCRAPE_SEARCH_PAGINATE') {
+        const targetCount = msg.targetCount || 20;
+        const pageWait = msg.scrollDelay || 4000; // 翻页等待时间（毫秒），来自UI的间隔设置
+
+        // Set running flag in storage so stop works
+        chrome.storage.local.set({
+            _saki_paginate_state: { running: true, targetCount, collected: [], pageWait }
+        }).then(() => {
+            // Kick off the loop - it sends PAGINATE_COLLECTED when done
+            continuePaginationCollection();
+        });
+
+        return true; // keep channel open (response via PAGINATE_COLLECTED)
+    }
 });
+
+// Listen for pagination completion (which comes from this content script after page navigation)
+chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.type === 'PAGINATE_COLLECTED') {
+        // This is received by the popup
+    }
+});
+
 ui.onBatchConfirm((selectedItems, strategy_config, fullStrategy) => {
     if (selectedItems.length === 0) return;
 

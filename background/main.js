@@ -229,6 +229,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return false;
     }
 
+    // Stop pagination collection (clear storage state so next page load won't continue)
+    if (message.type === 'SEARCH_PAGINATE_STOP') {
+        chrome.storage.local.remove('_saki_paginate_state').catch(() => {});
+        return false;
+    }
+
+    // Relay PAGINATE_COLLECTED from content script (after page navigation) to popup
+    if (message.type === 'PAGINATE_COLLECTED') {
+        // Forward to popup
+        chrome.runtime.sendMessage({ type: 'PAGINATE_COLLECTED', links: message.links }).catch(() => {});
+        return false;
+    }
+
     // Content script notifies us that BATCH_DOWNLOAD was queued (AUTO_DOWNLOAD_QUEUED)
     // This tells us the audio download has been queued, close the tab and move on
     if (message.type === 'AUTO_DOWNLOAD_QUEUED') {
