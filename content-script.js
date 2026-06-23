@@ -130,7 +130,7 @@ async function initQuickButton() {
     btn.innerHTML = window.Icons.download;
 
     btn.onclick = () => {
-        activeTrigger = 'batch';
+        activeTrigger = 'autoDownload';
         window.postMessage({ source: 'SakiDown', type: 'TRIGGER_SNIFF' }, '*');
     };
 
@@ -179,6 +179,23 @@ window.addEventListener('message', (event) => {
 
         if (activeTrigger === 'batch') {
             ui.showBatchModal(payload);
+        } else if (activeTrigger === 'autoDownload') {
+            // 直接下载全部，纯音频策略，不弹框
+            const audioOnlyConfig = {
+                audio: true, video: false,
+                quality: { primary: 'best', secondary: 'dolby' },
+                codec: { primary: 'av1', secondary: 'hevc' },
+                merge: false, cover: false, danmaku: false,
+                name: '纯音频',
+            };
+            const tasks = (payload || []).map(item => ({
+                ...item,
+                preference: { ...item.preference, strategy_config: audioOnlyConfig },
+            }));
+            if (tasks.length > 0) {
+                chrome.runtime.sendMessage({ type: 'BATCH_DOWNLOAD', payload: { tasks } });
+                ui.showToast(`已添加 ${tasks.length} 个音频下载任务`, 3000);
+            }
         }
 
         activeTrigger = null;
@@ -192,7 +209,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
 
     if (msg.type === 'POPUP_TRIGGER_BATCH') {
-        activeTrigger = 'batch';
+        activeTrigger = 'autoDownload';
         window.postMessage({ source: 'SakiDown', type: 'TRIGGER_SNIFF' }, '*');
         sendResponse({ status: 'ok' });
 
