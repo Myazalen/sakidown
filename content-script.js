@@ -175,16 +175,24 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 function collectSearchLinks() {
-    const links = new Set();
-    document.querySelectorAll('a[href*="/video/"]').forEach(a => {
-        const href = a.getAttribute('href');
-        if (!href) return;
-        let url = href.startsWith('//') ? 'https:' + href :
-                  href.startsWith('/') ? 'https://www.bilibili.com' + href : href;
-        const m = url.match(/(BV|av)[a-zA-Z0-9]+/i);
-        if (m) links.add(`https://www.bilibili.com/video/${m[0]}`);
+    // 从搜索页的视频卡片中提取链接
+    const items = document.querySelectorAll('.video-item, .bili-video-card, .search-list-item');
+    const urls = [];
+    
+    items.forEach(item => {
+        const link = item.querySelector('a[href*="/video/"]');
+        if (link) {
+            const href = link.getAttribute('href');
+            // 补全完整URL
+            const fullUrl = href.startsWith('//') ? 'https:' + href : 
+                           href.startsWith('/') ? 'https://www.bilibili.com' + href : href;
+            if (fullUrl.includes('/video/BV')) {
+                urls.push(fullUrl);
+            }
+        }
     });
-    return [...links];
+    
+    return urls;
 }
 
 function findNextPageBtn() {
